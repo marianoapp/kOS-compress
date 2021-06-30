@@ -12,7 +12,7 @@ def main():
     parser.add_argument("-l", "--level", dest="level", type=int, choices=range(1, 6), default=5,
                         help="compression level")
     parser.add_argument("--sfx", action="store_true", help="create a self extracting package")
-    parser.add_argument("file", nargs="?", type=argparse.FileType("r"), default=default_input,
+    parser.add_argument("file", nargs="?", type=argparse.FileType("rb"), default=default_input,
                         help="file to compress")
     parser.add_argument("outfile", nargs="?", type=argparse.FileType("wb"), default=sys.stdout,
                         help="compressed file")
@@ -20,10 +20,19 @@ def main():
         parser.print_help()
         return
 
+    output = None
     args = parser.parse_args()
     data = args.file.read()
+    # if the data is read from stdout it comes as a string
+    if type(data) is str:
+        data = data.encode("ascii")
+    # compress
     if args.method == "d":
         output = dictionary.process(data, args.level, None, args.sfx)
+    elif args.method == "h":
+        output = huffman.process(data)
+    # write the output
+    if output is not None:
         args.outfile.write(output)
 
 

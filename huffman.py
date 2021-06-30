@@ -16,7 +16,7 @@ class Node:
         return self.freq < other.freq
 
 
-def huffman(data):
+def process(data):
     # measure the frequency of each symbol (count how many time they appear)
     symbol_freqs = Counter(data)  # Counter({'l': 2, 'H': 1, 'e': 1, 'o': 1})
     # create nodes for each symbol and add them to the freq queue
@@ -43,7 +43,6 @@ def huffman(data):
     # print(symbol_dict)
     # encode data
     bitstring = encode(data, symbol_dict)
-    print(len(bitstring) // 8)
     # append symbol codes
     codes = [code for symbol, code in symbol_dict.items()]
     bitstring = "".join(codes) + bitstring
@@ -72,7 +71,7 @@ def huffman(data):
     file_buffer.extend(entries_bytes)
     file_buffer.extend(buffer)
 
-    print(sorted(symbol_dict.items(), key=lambda x: len(x[1])))
+    # print(sorted(symbol_dict.items(), key=lambda x: len(x[1])))
 
     return file_buffer
 

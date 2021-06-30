@@ -1,23 +1,24 @@
 import sys
 import os.path
-import re
 from collections import defaultdict, deque
 from operator import itemgetter
 
 
 def process(data, level, max_entries, sfx):
+    # convert data to bytearray to make it mutable
+    data = bytearray(data)
     # prepare data by replacing newlines with a space
     if sfx:
-        data = re.sub(r"[\r\n]+", " ", data)
+        data = data.replace(b"\n", b" ").replace(b"\r", b" ")
     # build the characters dictionary
     chars_dict = build_chars_dict(data)
     # find non-overlapping sequences
     seqs = get_sequences(data, level, chars_dict)
     # find available symbols
-    symbols = [symbol for symbol in range(0, 255) if chr(symbol) not in chars_dict.keys()]
+    symbols = [bytes([symbol]) for symbol in range(0, 255) if symbol not in chars_dict.keys()]
     # remove newlines from available symbols
     if sfx:
-        symbols = [symbol for symbol in symbols if symbol not in [ord("\n"), ord("\r")]]
+        symbols = [symbol for symbol in symbols if symbol not in [b"\n", b"\r"]]
     # limit symbols available to max_entries, if specified
     if max_entries is not None:
         symbols = symbols[:max_entries]
@@ -48,9 +49,9 @@ def encode_data(data, seqs, symbols):
     # replacements table
     replacements = []
     for index, seq in enumerate(seqs):
-        replacements.append([seq[0].encode("ascii"), symbols[index].to_bytes(1, "little")])
+        replacements.append([seq[0], symbols[index]])
     # replace symbols in data
-    encoded_data = bytearray(data.encode("ascii"))
+    encoded_data = data
     for repl in replacements:
         encoded_data = encoded_data.replace(repl[0], repl[1])
     # express symbols using other symbols
@@ -71,16 +72,16 @@ def build_file(encoded_data, replacements, sfx):
     for repl in replacements:
         header_bytes.extend(repl[1])  # symbol
         header_bytes.extend(len(repl[0]).to_bytes(1, "little"))  # length of sequence
-        header_bytes.extend(repl[0])
+        header_bytes.extend(repl[0])  # sequence
     # combine header with data
     file_content = bytearray()
     if sfx:
-        file_content.extend("//".encode("ascii"))
+        file_content.extend(b"//")
     file_content.extend(header_bytes)
     file_content.extend(encoded_data)
     # append decompression stub
     if sfx:
-        file_content.append(ord("\n"))
+        file_content.extend(b"\n")
         file_content.extend(get_sfx_stub())
     return file_content
 
@@ -107,25 +108,27 @@ def get_sequences(data, level, chars_dict):    # TODO: find a better name
 
 
 def find_sequences(data, level, chars_dict):
-    data = data + chr(0x00)  # add padding at the end
+    data_length = len(data)
     # compression level
     min_matches = 6 - level
     # search for repeating sequences
     seqs = []
-    q = deque([[k, v] for k, v in chars_dict.items()])
+    q = deque([[[k], v] for k, v in chars_dict.items()])
     while q:
         k, v = q.pop()
         if len(v) > 1:
             next_chars = defaultdict(list)
-            for i in v:
+            gen = (i for i in v if (i + 1) < data_length)
+            for i in gen:
                 next_chars[data[i + 1]].append(i + 1)
             new_entries = 0
             for nck, ncv in next_chars.items():
                 if len(ncv) > min_matches:
-                    q.append([k + nck, ncv])
+                    new_key = k + [nck]
+                    q.append([new_key, ncv])
                     new_entries += len(ncv)
             if len(k) > 1 and len(v) > 1 and (len(v) - new_entries) >= 1:
-                seqs.append([k, v, 0])
+                seqs.append([bytearray(k), v, 0])
     return seqs
 
 
