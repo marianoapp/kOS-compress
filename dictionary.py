@@ -1,24 +1,38 @@
+import sys
+import os.path
+import re
 from collections import defaultdict, deque
 from operator import itemgetter
 
 
-def process(data):
+def process(data, level, max_entries, sfx):
+    # prepare data by replacing newlines with a space
+    if sfx:
+        data = re.sub(r"[\r\n]+", " ", data)
     # build the characters dictionary
     chars_dict = build_chars_dict(data)
     # find non-overlapping sequences
-    seqs = get_sequences(data, chars_dict)
+    seqs = get_sequences(data, level, chars_dict)
     # find available symbols
     symbols = [symbol for symbol in range(0, 255) if chr(symbol) not in chars_dict.keys()]
+    # remove newlines from available symbols
+    if sfx:
+        symbols = [symbol for symbol in symbols if symbol not in [ord("\n"), ord("\r")]]
+    # limit symbols available to max_entries, if specified
+    if max_entries is not None:
+        symbols = symbols[:max_entries]
     # keep the top n highest scored sequences, depending on the available symbols
     seqs = sorted(seqs, key=itemgetter(2), reverse=True)
     seqs = seqs[:len(symbols)]
     # encode the data
-    encoded_data = encode_data(data, seqs, symbols)
+    encoded_data, replacements = encode_data(data, seqs, symbols)
+    # build file
+    file_content = build_file(encoded_data, replacements, sfx)
 
     # seqs_print = [[k, len(v), s] for k, v, s in seqs]
     # print(sorted(seqs_print, key=itemgetter(2), reverse=True))
 
-    return encoded_data
+    return file_content
 
 
 def build_chars_dict(data):
@@ -36,25 +50,51 @@ def encode_data(data, seqs, symbols):
     for index, seq in enumerate(seqs):
         replacements.append([seq[0].encode("ascii"), symbols[index].to_bytes(1, "little")])
     # replace symbols in data
-    new_data = bytearray(data.encode("ascii"))
+    encoded_data = bytearray(data.encode("ascii"))
     for repl in replacements:
-        new_data = new_data.replace(repl[0], repl[1])
-    # TODO: express symbols as sequence of other symbols
+        encoded_data = encoded_data.replace(repl[0], repl[1])
+    # express symbols using other symbols
+    replacements = sorted(replacements, key=itemgetter(0))
+    for index, repl in enumerate(replacements):
+        for sr in replacements[index+1:]:
+            if repl[0] in sr[0]:
+                sr[0] = sr[0].replace(repl[0], repl[1])
+    # return encoded data and sorted replacements
+    return encoded_data, replacements
+
+
+def build_file(encoded_data, replacements, sfx):
     # build header
     header_bytes = bytearray()
     header_bytes.extend(len(replacements).to_bytes(1, "little"))
+    header_bytes.extend(len(encoded_data).to_bytes(2, "little"))
     for repl in replacements:
         header_bytes.extend(repl[1])  # symbol
-        header_bytes.extend(len(repl[0]).to_bytes(1, "little"))     # length of sequence
+        header_bytes.extend(len(repl[0]).to_bytes(1, "little"))  # length of sequence
         header_bytes.extend(repl[0])
     # combine header with data
-    encoded_data = header_bytes + new_data
-    return encoded_data
+    file_content = bytearray()
+    if sfx:
+        file_content.extend("//".encode("ascii"))
+    file_content.extend(header_bytes)
+    file_content.extend(encoded_data)
+    # append decompression stub
+    if sfx:
+        file_content.append(ord("\n"))
+        file_content.extend(get_sfx_stub())
+    return file_content
 
 
-def get_sequences(data, chars_dict):    # TODO: find a better name
+def get_sfx_stub():
+    stub_path = os.path.join(sys.path[0], "sfxstub.ks")
+    with open(stub_path, "r") as f:
+        text = f.read()
+    return text.encode("ascii")
+
+
+def get_sequences(data, level, chars_dict):    # TODO: find a better name
     # find repeating sequences
-    seqs = find_sequences(data, chars_dict)
+    seqs = find_sequences(data, level, chars_dict)
     # calculate the sequence score
     seqs = update_score(seqs)
     # remove fully overlapping sequences where all instances overlap with a longer one
@@ -66,8 +106,10 @@ def get_sequences(data, chars_dict):    # TODO: find a better name
     return seqs
 
 
-def find_sequences(data, chars_dict):
+def find_sequences(data, level, chars_dict):
     data = data + chr(0x00)  # add padding at the end
+    # compression level
+    min_matches = 6 - level
     # search for repeating sequences
     seqs = []
     q = deque([[k, v] for k, v in chars_dict.items()])
@@ -79,7 +121,7 @@ def find_sequences(data, chars_dict):
                 next_chars[data[i + 1]].append(i + 1)
             new_entries = 0
             for nck, ncv in next_chars.items():
-                if len(ncv) > 1:
+                if len(ncv) > min_matches:
                     q.append([k + nck, ncv])
                     new_entries += len(ncv)
             if len(k) > 1 and len(v) > 1 and (len(v) - new_entries) >= 1:
